@@ -11,6 +11,7 @@ import argparse
 
 from rnn_model import GRUDecoder
 from evaluate_model_helpers import *
+from dataset import N_PHONEMES
 
 # argument parser for command line arguments
 parser = argparse.ArgumentParser(description='Evaluate a pretrained RNN model on the copy task dataset.')
@@ -129,8 +130,10 @@ pbar.close()
 for session, data in test_data.items():
     data['pred_seq'] = []
     for trial in range(len(data['logits'])):
-        logits = data['logits'][trial][0]
-        pred_seq = np.argmax(logits, axis=-1)
+        logits = torch.from_numpy(data['logits'][trial][0])
+        log_probs = torch.log_softmax(logits, dim=-1)
+        phone_log_probs = torch.logsumexp(log_probs.view(log_probs.shape[0], N_PHONEMES, N_PHONEMES), dim=1)
+        pred_seq = torch.argmax(phone_log_probs, dim=-1).cpu().numpy()
         # remove blanks (0)
         pred_seq = [int(p) for p in pred_seq if p != 0]
         # remove consecutive duplicates
