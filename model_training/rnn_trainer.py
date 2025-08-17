@@ -12,7 +12,7 @@ import sys
 import json
 import pickle
 
-from dataset import BrainToTextDataset, train_test_split_indicies
+from dataset import BrainToTextDataset, train_test_split_indicies, N_PHONEMES
 from data_augmentations import gauss_smooth
 
 import torchaudio.functional as F # for edit distance
@@ -532,18 +532,27 @@ class BrainToTextDecoder_Trainer:
 
                 adjusted_lens = ((n_time_steps - self.args['model']['patch_size']) / self.args['model']['patch_stride'] + 1).to(torch.int32)
 
-                # Get phoneme predictions 
                 logits = self.model(features, day_indicies)
+                log_probs = logits.log_softmax(2)
 
-                # Calculate CTC Loss
-                loss = self.ctc_loss(
-                    log_probs = torch.permute(logits.log_softmax(2), [1, 0, 2]),
-                    targets = labels,
-                    input_lengths = adjusted_lens,
-                    target_lengths = phone_seq_lens
-                    )
-                    
-                loss = torch.mean(loss) # take mean loss over batches
+                # phoneme log-probs via marginalization over previous phoneme
+                phone_log_probs = log_probs.view(log_probs.shape[0], log_probs.shape[1], N_PHONEMES, N_PHONEMES)
+                phone_log_probs = torch.logsumexp(phone_log_probs, dim=2)
+
+                # diphone and phoneme CTC losses
+                diphone_loss = self.ctc_loss(
+                    torch.permute(log_probs, [1, 0, 2]),
+                    diphone_labels,
+                    adjusted_lens,
+                    phone_seq_lens,
+                )
+                phoneme_loss = self.ctc_loss(
+                    torch.permute(phone_log_probs, [1, 0, 2]),
+                    labels,
+                    adjusted_lens,
+                    phone_seq_lens,
+                )
+                loss = 0.4 * torch.mean(diphone_loss) + 0.6 * torch.mean(phoneme_loss)
             
             loss.backward()
 
@@ -709,30 +718,40 @@ class BrainToTextDecoder_Trainer:
                     adjusted_lens = ((n_time_steps - self.args['model']['patch_size']) / self.args['model']['patch_stride'] + 1).to(torch.int32)
 
                     logits = self.model(features, day_indicies)
-    
-                    loss = self.ctc_loss(
-                        torch.permute(logits.log_softmax(2), [1, 0, 2]),
+                    log_probs = logits.log_softmax(2)
+
+                    phone_log_probs = log_probs.view(log_probs.shape[0], log_probs.shape[1], N_PHONEMES, N_PHONEMES)
+                    phone_log_probs = torch.logsumexp(phone_log_probs, dim=2)
+
+                    diphone_loss = self.ctc_loss(
+                        torch.permute(log_probs, [1, 0, 2]),
+                        diphone_labels,
+                        adjusted_lens,
+                        phone_seq_lens,
+                    )
+                    phoneme_loss = self.ctc_loss(
+                        torch.permute(phone_log_probs, [1, 0, 2]),
                         labels,
                         adjusted_lens,
                         phone_seq_lens,
                     )
-                    loss = torch.mean(loss)
+                    loss = 0.4 * torch.mean(diphone_loss) + 0.6 * torch.mean(phoneme_loss)
 
                 metrics['losses'].append(loss.cpu().detach().numpy())
 
                 # Calculate PER per day and also avg over entire validation set
-                batch_edit_distance = 0 
+                batch_edit_distance = 0
                 decoded_seqs = []
                 for iterIdx in range(logits.shape[0]):
-                    decoded_seq = torch.argmax(logits[iterIdx, 0 : adjusted_lens[iterIdx], :].clone().detach(),dim=-1)
+                    decoded_seq = torch.argmax(phone_log_probs[iterIdx, 0:adjusted_lens[iterIdx], :], dim=-1)
                     decoded_seq = torch.unique_consecutive(decoded_seq, dim=-1)
                     decoded_seq = decoded_seq.cpu().detach().numpy()
                     decoded_seq = np.array([i for i in decoded_seq if i != 0])
 
-                    trueSeq = np.array(
-                        labels[iterIdx][0 : phone_seq_lens[iterIdx]].cpu().detach()
-                    )
-            
+                    trueSeq = torch.unique_consecutive(
+                        labels[iterIdx][0:phone_seq_lens[iterIdx]]
+                    ).cpu().detach().numpy()
+
                     batch_edit_distance += F.edit_distance(decoded_seq, trueSeq)
 
                     decoded_seqs.append(decoded_seq)
