@@ -519,6 +519,7 @@ class BrainToTextDecoder_Trainer:
             # Move data to device
             features = batch['input_features'].to(self.device)
             labels = batch['seq_class_ids'].to(self.device)
+            diphone_labels = batch['diphone_seq_ids'].to(self.device)
             n_time_steps = batch['n_time_steps'].to(self.device)
             phone_seq_lens = batch['phone_seq_lens'].to(self.device)
             day_indicies = batch['day_indicies'].to(self.device)
@@ -688,6 +689,7 @@ class BrainToTextDecoder_Trainer:
 
             features = batch['input_features'].to(self.device)
             labels = batch['seq_class_ids'].to(self.device)
+            diphone_labels = batch['diphone_seq_ids'].to(self.device)
             n_time_steps = batch['n_time_steps'].to(self.device)
             phone_seq_lens = batch['phone_seq_lens'].to(self.device)
             day_indicies = batch['day_indicies'].to(self.device)
