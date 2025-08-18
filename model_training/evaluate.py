@@ -13,6 +13,7 @@ from evaluate_model_helpers import load_h5py_file, runSingleDecodingStep
 from dataset import N_PHONEMES
 
 
+
 def load_lm_modules(lm_path, device, nbest, acoustic_scale):
     """Load the ngram decoder and OPT model from the language_model package."""
     lm_file = os.path.join(os.path.dirname(__file__), "../language_model/language-model-standalone.py")
@@ -89,6 +90,7 @@ def main(args):
                 np.zeros_like(phone_log_probs),
                 np.log(args.blank_penalty),
             )
+
             nbest = decoder.result()
             _, nbest_rescored = lm.gpt2_lm_decode(
                 opt_model,
