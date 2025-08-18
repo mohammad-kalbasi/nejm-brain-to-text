@@ -10,6 +10,8 @@ from omegaconf import OmegaConf
 
 from rnn_model import GRUDecoder
 from evaluate_model_helpers import load_h5py_file, runSingleDecodingStep
+from dataset import N_PHONEMES
+
 
 
 def load_lm_modules(lm_path, device, nbest, acoustic_scale):
@@ -67,8 +69,28 @@ def main(args):
             x = sdata['neural_features'][i]
             x = torch.tensor(x, device=device, dtype=torch.bfloat16).unsqueeze(0)
             logits = runSingleDecodingStep(x, input_layer, model, model_args, device)
-            log_probs = torch.log_softmax(torch.from_numpy(logits[0]), dim=-1).cpu().numpy()
-            lm.lm_decoder.DecodeNumpy(decoder, log_probs, np.zeros_like(log_probs), np.log(args.blank_penalty))
+            log_probs = torch.log_softmax(torch.from_numpy(logits[0]), dim=-1)
+            diphone_log_probs = log_probs.view(log_probs.shape[0], N_PHONEMES, N_PHONEMES)
+            phone_log_probs = torch.logsumexp(diphone_log_probs, dim=1)
+
+            # collapse blanks and consecutive repeats before decoding
+            pred_ids = torch.argmax(phone_log_probs, dim=-1)
+            keep = torch.ones_like(pred_ids, dtype=torch.bool)
+            keep[1:] = pred_ids[1:] != pred_ids[:-1]
+            keep &= pred_ids != 0
+            phone_log_probs = phone_log_probs[keep]
+            if phone_log_probs.shape[0] == 0:
+                phone_log_probs = torch.full((1, N_PHONEMES), float('-inf'))
+                phone_log_probs[0, 0] = 0.0
+            phone_log_probs = phone_log_probs.cpu().numpy()
+
+            lm.lm_decoder.DecodeNumpy(
+                decoder,
+                phone_log_probs,
+                np.zeros_like(phone_log_probs),
+                np.log(args.blank_penalty),
+            )
+
             nbest = decoder.result()
             _, nbest_rescored = lm.gpt2_lm_decode(
                 opt_model,
